@@ -86,6 +86,13 @@
 		touch-gpio = <&gpio1 RK_PA0 IRQ_TYPE_LEVEL_LOW>;
 		reset-gpio = <&gpio1 RK_PA1 GPIO_ACTIVE_HIGH>;
 	};
+
+	GP7101@58 {      // 定义一个子节点，名字为GP7101，地址为58
+		compatible = "gp7101-backlight";   // 该节点与"gp7101-backlight"兼容
+		reg = <0x58>;                      // GP7101地址0x58
+		max-brightness-levels = <255>;     // 背光亮度的最大级别是255
+		default-brightness-level = <100>;  // 默认的背光亮度级别是100
+	};
 };
 
 &pinctrl {
