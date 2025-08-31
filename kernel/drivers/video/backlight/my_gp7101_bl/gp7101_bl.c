@@ -26,7 +26,12 @@
 
 #define BACKLIGHT_NAME "gp7101-backlight"
 
-
+/* 背光控制器设备数据结构 */
+struct gp7101_backlight_data {
+    /* 指向一个i2c_client结构体的指针*/
+    struct i2c_client *client;
+    /*......其他成员后面有用到再添加........*/
+};
 
 static int gp7101_bl_probe(struct i2c_client *client,
             const struct i2c_device_id *id)
