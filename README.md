@@ -11,6 +11,13 @@
 - **系统**: Android
 - **开发板**: 泰山派(TSPI)
 
+## 我的编译环境
+
+- **VMware Ubuntu 22.04**
+- **虚拟机内存 > 12.1GB**
+- **虚拟机存储空间 > 260GB**
+- **SDK**: [泰山派(TSPI)](https://wiki.lckfb.com/zh-hans/tspi-rk3566/download-center.html) 中的SDK
+
 ## 学习目标
 
 - 了解Android驱动开发基础
