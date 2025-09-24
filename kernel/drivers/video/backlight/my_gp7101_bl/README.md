@@ -227,3 +227,21 @@ static int gp7101_bl_probe(struct i2c_client *client,
     - 在函数入口和出口打印信息，确认函数是否被调用 (MY_DEBUG("probe entry"); )。
     - 打印某些关键变量的值 (MY_DEBUG("brightness = %d", level); )。
     - 标记代码执行到了某个特定的分支。
+
+#### devm_backlight_device_register 函数原型
+
+```c
+struct backlight_device *devm_backlight_device_register(
+    struct device *dev, const char *name, struct device *parent,
+    void *devdata, const struct backlight_ops *ops,
+    const struct backlight_properties *props);
+```
+
+参数说明：
+
+- dev：指向父设备的指针，通常是一个 struct i2c_client 或 struct platform_device。
+- name：背光设备的名称。
+- parent：背光设备的父设备，通常与 dev 参数相同。
+- devdata：私有数据，会被传递给背光操作函数。
+- ops：指向 backlight_ops 结构的指针，这个结构定义了背光设备的行为，包括设置亮度、获取亮度等操作。
+- props：指向 backlight_properties 结构的指针，这个结构包含了背光设备的属性，如最大亮度、当前亮度等。
