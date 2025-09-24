@@ -816,3 +816,13 @@ touch_id = touch_data[2] >> 4;    // 获取触摸点ID
 ```c
 input_y  = ((touch_data[2]&0x0f)<<8) | touch_data[3]; // 计算Y坐标
 ```
+
+## 单独编译kernel（只适合带emmc版本）
+
+- 编译命令【执行全编译命令成功之后，编译内核】【进入kernel目录】
+
+```bash
+make ARCH=arm64 BOOT_IMG=../rockdev/Image-rk3566_tspi/boot.img tspi-rk3566-user-v10.img -j72
+```
+
+- 在 `SDK/rockdev/Image-rk3566_tspi` 目录下查看所有生成的img
