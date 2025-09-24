@@ -245,3 +245,41 @@ struct backlight_device *devm_backlight_device_register(
 - devdata：私有数据，会被传递给背光操作函数。
 - ops：指向 backlight_ops 结构的指针，这个结构定义了背光设备的行为，包括设置亮度、获取亮度等操作。
 - props：指向 backlight_properties 结构的指针，这个结构包含了背光设备的属性，如最大亮度、当前亮度等。
+
+### ops 和 gp7101_backlight_set
+
+```c
+static struct backlight_ops gp7101_backlight_ops = {
+    .update_status = gp7101_backlight_set,
+};
+```
+
+- gp7101_backlight_set 函数是更新背光的核心函数，每次背光被改动的时候系统都会回调这个函数，在函数中我们通过i2c1去写gp7101实现修改背光。
+- gp7101两种操作方法，一种是8位PWM，一种是16位PWM，刚好我们背光是0~255，所以我们选择8位PWM，八位PWM需要写寄存器0x03
+
+```c
+/* I2C 背光控制器寄存器定义 */
+#define BACKLIGHT_REG_CTRL_8  0x03
+#define BACKLIGHT_REG_CTRL_16 0x02
+
+/* 设置背光亮度函数 */
+static int gp7101_backlight_set(struct backlight_device *bl)
+{
+    int ret = 0;
+    struct gp7101_backlight_data *data = bl_get_data(bl);   // 获取自定义的背光数据结构
+    struct i2c_client *client = data->client;               // 获取i2c设备指针
+    u8 addr[1] = {BACKLIGHT_REG_CTRL_8};                    // 定义i2c地址数组
+    u8 buf[1] = {bl->props.brightness};                     // 定义数据缓冲区，存储亮度值
+
+    MY_DEBUG("pwm:%d\n", bl->props.brightness);             // 输出背光亮度值
+    
+    // 将背光亮度值写入设备
+    ret = i2c_smbus_write_byte_data(client, addr[0], buf[0]);
+    if (ret < 0) {
+        dev_err(&client->dev, "Failed to set brightness, err %d\n", ret);
+        return ret;
+    }
+
+    return 0;
+}
+```
