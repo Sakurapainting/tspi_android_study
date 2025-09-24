@@ -28,12 +28,12 @@
 // 定义一个表示触摸设备的结构体
 struct my_touch_dev {
     struct i2c_client *client;       
-    struct input_dev *inputdev;
+    struct input_dev *input_dev;
     int rst_pin;
     int irq_pin;
     u32 abs_x_max;
     u32 abs_y_max;
-    int irq_num;
+    int irq;            // 中断号
 };
 
 s32 my_touch_i2c_read(struct i2c_client *client,u8 *addr,u8 addr_len, u8 *buf, s32 len)
