@@ -57,3 +57,173 @@
 };
 ```
 
+## GP7101驱动 - iic框架
+
+- 一般背光驱动都放在 `/kernel/drivers/video/backlight` 目录下，所以我们在此路径下创建一个 `my_gp7101_bl` 目录用来存放 `Makefile` 和 `gp7101_bl.c` 文件。
+
+- my_gp7101_bl/Makefile中把gp7101_bl.c编译到内核中，当然也可以选择obj-m编译成模块。
+
+```makefile
+obj-y   += gp7101_bl.o
+```
+
+- 要想my_gp7101_bl下的Makefile生效还需要在 `上一层目录` 的Makefile中添加my_gp7101_bl目录，所以我们需要在backlight目录下Makefile中加入：
+
+```makefile
+obj-y += my_gp7101_bl/
+```
+
+### 示例中 MY_DEBUG 宏
+
+用于在内核模块运行时输出调试信息到内核日志中，帮助开发者追踪代码执行流程和调试问题。
+
+```c
+#define MY_DEBUG(fmt,arg...)  printk("gp7101_bl:%s %d "fmt"",__FUNCTION__,__LINE__,##arg);
+```
+
+#### 参数说明：
+
+- fmt: 用户自定义的格式化字符串（类似 printf 的格式字符串）
+- arg...: 可变参数列表
+- ##arg: GCC 扩展，处理可变参数
+
+#### 使用示例:
+从您的代码中可以看到几个使用例子：
+
+```c
+static int gp7101_bl_probe(struct i2c_client *client,
+            const struct i2c_device_id *id)
+{
+    MY_DEBUG("locat");  // 输出: "gp7101_bl:gp7101_bl_probe 32 locat"
+    return 0;
+}
+```
+
+- probe函数：系统检测到匹配的设备时会自动调用。
+- remove函数：同probe理。
+
+#### 条件编译控制 - 启用/禁用 调试输出
+
+```c
+#if 1
+#define MY_DEBUG(fmt,arg...)  printk("gp7101_bl:%s %d "fmt"",__FUNCTION__,__LINE__,##arg);
+#else
+#define MY_DEBUG(fmt,arg...)  // 空定义，不输出任何内容
+#endif
+```
+
+- 当 #if 1 时：启用调试输出
+- 当 #if 0 时：禁用调试输出，宏展开为空，不影响性能
+
+### gp7101_backlight_data
+
+```c
+/* 背光控制器设备数据结构 */
+struct gp7101_backlight_data {
+    /* 指向一个i2c_client结构体的指针*/
+    struct i2c_client *client;
+    /*......其他成员后面有用到再添加........*/
+};
+```
+
+### probe 函数
+
+- 为背光数据结构动态分配内存
+- 初始化背光属性结构
+- 从设备树中读取最大亮度、默认亮度级别
+- 确保亮度值在有效范围内
+- 注册背光设备
+- 设置i2c_client的客户端数据(将自定义数据结构与i2c_client关联)
+- 更新背光设备的状态
+
+```c
+// gp7101_bl_probe - 探测函数，当I2C总线上的设备与驱动匹配时会被调用
+static int gp7101_bl_probe(struct i2c_client *client,
+            const struct i2c_device_id *id)
+{
+    struct backlight_device *bl; // backlight_device结构用于表示背光设备
+    struct gp7101_backlight_data *data; // 自定义的背光数据结构
+    struct backlight_properties props; // 背光设备的属性
+    struct device_node *np = client->dev.of_node; // 设备树中的节点
+
+    MY_DEBUG("locat"); // 打印调试信息
+
+    // 为背光数据结构动态分配内存
+    data = devm_kzalloc(&client->dev, sizeof(struct gp7101_backlight_data), GFP_KERNEL);
+    if (data == NULL){
+        dev_err(&client->dev, "Alloc GFP_KERNEL memory failed."); // 内存分配失败，打印错误信息
+        return -ENOMEM; // 返回内存分配错误码
+    }
+
+    // 初始化背光属性结构
+    memset(&props, 0, sizeof(props));
+    props.type = BACKLIGHT_RAW; // 设置背光类型为原始类型
+    props.max_brightness = 255; // 设置最大亮度为255
+
+    // 从设备树中读取最大亮度级别
+    of_property_read_u32(np, "max-brightness-levels", &props.max_brightness);
+
+    // 从设备树中读取默认亮度级别
+    of_property_read_u32(np, "default-brightness-level", &props.brightness);
+
+    // 确保亮度值在有效范围内
+    if(props.max_brightness>255 || props.max_brightness<0){
+        props.max_brightness = 255;
+    }
+    if(props.brightness>props.max_brightness || props.brightness<0){
+        props.brightness = props.max_brightness;
+    }
+
+    // 注册背光设备
+    bl = devm_backlight_device_register(&client->dev, BACKLIGHT_NAME, &client->dev, data, &gp7101_backlight_ops,&props);
+    if (IS_ERR(bl)) {
+        dev_err(&client->dev, "failed to register backlight device\n"); // 注册失败，打印错误信息
+        return PTR_ERR(bl); // 返回错误码
+    }
+    data->client = client; // 保存i2c_client指针
+    i2c_set_clientdata(client, data); // 设置i2c_client的客户端数据
+
+    MY_DEBUG("max_brightness:%d brightness:%d",props.max_brightness, props.brightness); // 打印最大亮度和当前亮度
+    backlight_update_status(bl); // 更新背光设备的状态
+
+    return 0; // 返回成功
+}
+```
+
+- 其中，gfp_t gfp，作用: "Get Free Page" 标志，它用来控制内存分配器的行为：
+
+```c
+ // 为背光数据结构动态分配内存
+    data = devm_kzalloc(&client->dev, sizeof(struct gp7101_backlight_data), GFP_KERNEL);
+    if (data == NULL){
+        dev_err(&client->dev, "Alloc GFP_KERNEL memory failed."); // 内存分配失败，打印错误信息
+        return -ENOMEM; // 返回内存分配错误码
+    }
+```
+
+最常用标志:
+- GFP_KERNEL: 这是最常用的标志。它表示分配过程可以“睡眠”（阻塞），等待系统回收内存页。这只能在允许睡眠的进程上下文中使用（例如，在 probe 函数中）。
+- GFP_ATOMIC: 用于不能睡眠的上下文，例如中断处理函数或持有自旋锁的时候。它告诉分配器必须立即完成分配，不能等待。如果内存不足，会立即失败。
+- 隐式行为: devm_kzalloc 的名字中的 z 代表 "zero"。它隐式地包含了 __GFP_ZERO 标志，所以分配到的内存会被自动清零，你不需要再手动调用 memset。
+
+#### dev_err和MY_DEBUG区别
+
+- dev_err (Device Error)
+  - 用途: 用于报告设备相关的错误。这是驱动程序中报告严重问题（导致功能无法正常工作的错误）的标准方式。
+日志级别: 它使用 KERN_ERR 日志级别。这意味着这个消息非常重要，通常会被记录到系统的主要日志文件中，即使用户没有特意开启调试选项。
+  - 格式: dev_err(struct device *dev, const char *fmt, ...)
+  - 它会自动在输出中包含驱动和设备的名称（例如 i2c-GP7101@58），这使得定位问题来源非常容易。
+  - 何时使用:
+    - 内存分配失败 (devm_kzalloc 返回 NULL)。
+    - 硬件通信失败 (例如 i2c_smbus_write_byte 返回负值)。
+    - 注册子系统失败 (例如 devm_backlight_device_register 返回错误)。
+任何阻止驱动正常工作的关键性失败。
+- MY_DEBUG (自定义调试宏)
+  - 用途: 用于输出调试信息或流程追踪信息。这些信息在正常运行时不是必需的，但在开发和调试阶段非常有用。
+  - 日志级别: 您的宏直接使用了 printk，它默认的日志级别是 KERN_WARNING。但更重要的是，您的宏可以通过 #if 0 完全关闭，在最终发布的版本中不会产生任何代码，没有性能开销。
+  - 格式: MY_DEBUG(const char *fmt, ...)
+  - 您的宏会输出函数名和行号，非常适合追踪代码执行路径。
+  - 何时使用:
+    - 在函数入口和出口打印信息，确认函数是否被调用 (MY_DEBUG("probe entry"); )。
+    - 打印某些关键变量的值 (MY_DEBUG("brightness = %d", level); )。
+    - 标记代码执行到了某个特定的分支。
