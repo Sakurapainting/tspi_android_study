@@ -17,6 +17,7 @@
 #include <linux/timer.h>
 #include <linux/input/mt.h>
 #include <linux/random.h>
+#include <linux/backlight.h>
 
 #if 1
 #define MY_DEBUG(fmt,arg...)  printk("gp7101_bl:%s %d "fmt"",__FUNCTION__,__LINE__,##arg);
