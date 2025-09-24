@@ -436,3 +436,383 @@ disp_timings1: display-timings {
 };
 ```
 
+## 触摸屏驱动
+
+- 配置i2c1设备树：
+
+```c
+&i2c1 {
+    status = "okay";             // 表示这个i2c1设备是可用的
+    clock-frequency = <400000>;  // 设置i2c1的时钟频率为400kHz
+    myts@38 {                    // 定义一个i2c设备，设备地址为0x38，设备名称为myts
+        compatible = "my,touch"; // 表示这个设备是触摸屏设备，驱动名称为my,touch
+        reg = <0x38>;            // i2c设备地址
+        tp-size = <89>;          // 触摸屏的大小
+        max-x = <480>;           // 触摸屏支持的最大X坐标值
+        max-y = <800>;           // 触摸屏支持的最大Y坐标值
+        touch-gpio = <&gpio1 RK_PA0 IRQ_TYPE_LEVEL_LOW>; // 触摸屏的触摸中断引脚，连接到gpio1的第0个引脚，触发方式为低电平触发
+        reset-gpio = <&gpio1 RK_PA1 GPIO_ACTIVE_HIGH>;   // 触摸屏的复位引脚，连接到gpio1的第1个引脚，有效电平为高电平
+    };
+   /****省略****/
+};
+```
+
+- 创建驱动：一般触摸都放在 `/kernel/drivers/input/touchscreen` 目录下，所以我们在此路径下创建一个 `my_touch` 目录用来存放 `Makefile` 和 `my_touch.c` 文件。
+- 编写Makefile： `touchscreen/my_touch/Makefile` 中把 `my_touch.c` 编译到内核中，当然也可以选择obj-m编译成模块。
+
+```makefile
+obj-y   += my_touch.o
+```
+
+- 在 `上一层目录` 的Makefile中添加：
+
+```makefile
+obj-y += my_gp7101_bl/
+```
+
+- i2c驱动框架：
+
+```c
+#include "linux/stddef.h"
+#include <linux/kernel.h>
+#include <linux/hrtimer.h>
+#include <linux/i2c.h>
+#include <linux/input.h>
+#include <linux/module.h>
+#include <linux/delay.h>
+#include <linux/i2c.h>
+#include <linux/proc_fs.h>
+#include <linux/string.h>
+#include <linux/uaccess.h>
+#include <linux/vmalloc.h>
+#include <linux/interrupt.h>
+#include <linux/io.h>
+#include <linux/of_gpio.h>
+#include <linux/gpio.h>
+#include <linux/slab.h>
+#include <linux/timer.h>
+#include <linux/input/mt.h>
+#include <linux/random.h>
+
+static int my_touch_ts_probe(struct i2c_client *client,
+            const struct i2c_device_id *id)
+{
+    return 0;
+}
+
+static int my_touch_ts_remove(struct i2c_client *client)
+{
+    MY_DEBUG("locat");
+    return 0;
+}
+
+static const struct of_device_id my_touch_of_match[] = {
+    { .compatible = "my,touch", },
+    { /* sentinel */ }
+};
+MODULE_DEVICE_TABLE(of, my_touch_of_match);
+
+static struct i2c_driver my_touch_ts_driver = {
+    .probe      = my_touch_ts_probe,
+    .remove     = my_touch_ts_remove,
+    .driver = {
+        .name     = "my-touch",
+     .of_match_table = of_match_ptr(my_touch_of_match),
+    },
+};
+
+static int __init my_ts_init(void)
+{
+    MY_DEBUG("locat");
+    return i2c_add_driver(&my_touch_ts_driver);
+}
+
+static void __exit my_ts_exit(void)
+{
+    MY_DEBUG("locat");
+    i2c_del_driver(&my_touch_ts_driver);
+}
+
+module_init(my_ts_init);
+module_exit(my_ts_exit);
+
+MODULE_LICENSE("GPL");
+MODULE_DESCRIPTION("My touch driver");
+MODULE_AUTHOR("SakoroYou");
+```
+
+- 创建 `my_touch_dev` 结构体：
+
+```c
+// 定义一个表示触摸设备的结构体
+struct my_touch_dev {
+    struct i2c_client *client; // 指向与触摸设备通信的 I2C 客户端结构体的指针
+    struct input_dev *input_dev; // 指向与输入设备关联的 input_dev 结构体的指针，用于处理输入事件
+    int rst_pin; // 触摸设备的复位引脚编号
+    int irq_pin; // 触摸设备的中断引脚编号
+    u32 abs_x_max; // 触摸设备在 X 轴上的最大绝对值
+    u32 abs_y_max; // 触摸设备在 Y 轴上的最大绝对值
+    int irq; // 触摸设备的中断号
+};
+```
+
+- probe：
+
+```c
+static int my_touch_ts_probe(struct i2c_client *client,
+            const struct i2c_device_id *id)
+{
+    int ret;
+    struct my_touch_dev *ts;
+    struct device_node *np = client->dev.of_node;
+    // 打印调试信息
+    MY_DEBUG("locat");
+
+    // ts = kzalloc(sizeof(*ts), GFP_KERNEL);
+    ts = devm_kzalloc(&client->dev, sizeof(*ts), GFP_KERNEL);
+    if (ts == NULL){
+        dev_err(&client->dev, "Alloc GFP_KERNEL memory failed.");
+        return -ENOMEM;
+    }
+    ts->client = client;
+    i2c_set_clientdata(client, ts);
+
+    if (of_property_read_u32(np, "max-x", &ts->abs_x_max)) {
+    	dev_err(&client->dev, "no max-x defined\n");
+    	return -EINVAL;
+    }
+    MY_DEBUG("abs_x_max:%d",ts->abs_x_max);
+
+    if (of_property_read_u32(np, "max-y", &ts->abs_y_max)) {
+    	dev_err(&client->dev, "no max-y defined\n");
+    	return -EINVAL;
+    }
+    MY_DEBUG("abs_x_max:%d",ts->abs_y_max);
+
+    //找复位gpio
+    ts->rst_pin = of_get_named_gpio(np, "reset-gpio", 0);
+    //申请复位gpio
+    ret = devm_gpio_request(&client->dev,ts->rst_pin,"my touch touch gpio");
+    if (ret < 0){
+        dev_err(&client->dev, "gpio request failed.");
+        return -ENOMEM;
+    }
+
+    //找中断引进
+    ts->irq_pin = of_get_named_gpio(np, "touch-gpio", 0);
+    /* 申请使用管脚 */
+    ret = devm_gpio_request_one(&client->dev, ts->irq_pin,
+                GPIOF_IN, "my touch touch gpio");
+    if (ret < 0)
+        return ret;
+
+    gpio_direction_output(ts->rst_pin,0);
+    msleep(20); 
+    gpio_direction_output(ts->irq_pin,0);
+    msleep(2); 
+    gpio_direction_output(ts->rst_pin,1);
+    msleep(6); 
+    gpio_direction_output(ts->irq_pin, 0);
+    gpio_direction_output(ts->irq_pin, 0);
+    msleep(50);
+
+    //申请中断
+    ts->irq = gpio_to_irq(ts->irq_pin); 
+    if(ts->irq){
+        ret = devm_request_threaded_irq(&(client->dev), ts->irq, NULL, 
+            my_touch_irq_handler, IRQF_TRIGGER_FALLING | IRQF_ONESHOT , 
+            client->name, ts);
+        if (ret != 0) {
+            MY_DEBUG("Cannot allocate ts INT!ERRNO:%d\n", ret);
+            return ret;
+        }
+    }
+
+    // 分配输入设备对象
+    ts->input_dev = devm_input_allocate_device(&client->dev);
+    if (!ts->input_dev) {
+        dev_err(&client->dev, "Failed to allocate input device.\n");
+        return -ENOMEM;
+    }
+
+    // 设置输入设备的名称和总线类型
+    ts->input_dev->name = "my touch screen";
+    ts->input_dev->id.bustype = BUS_I2C;
+
+    /*设置触摸 x 和 y 的最大值*/
+    // 设置输入设备的绝对位置参数
+    input_set_abs_params(ts->input_dev, ABS_MT_POSITION_X, 0, 480, 0, 0);
+    input_set_abs_params(ts->input_dev, ABS_MT_POSITION_Y, 0, 800, 0, 0);
+
+    // 初始化多点触摸设备的槽位
+    ret = input_mt_init_slots(ts->input_dev, 5, INPUT_MT_DIRECT);
+    if (ret) {
+        dev_err(&client->dev, "Input mt init error\n");
+        return ret;
+    }
+
+    // 注册输入设备
+    ret = input_register_device(ts->input_dev);
+    if (ret)
+        return ret;
+
+    return 0;
+}
+```
+
+### `devm_gpio_request` 和 `devm_gpio_request_one` 的区别
+
+简单来说：
+*   `devm_gpio_request`: 只是“预留”这个GPIO引脚，告诉系统“我要用这个引脚了”。
+*   `devm_gpio_request_one`: 不仅“预留”引脚，还能在**一步之内**就把它配置好（比如设置为输入/输出，高/低电平）。
+
+#### 详细对比
+
+| 特性 | `devm_gpio_request` | `devm_gpio_request_one` |
+| :--- | :--- | :--- |
+| **核心功能** | 只请求GPIO的所有权。 | 请求所有权 **并** 设置初始方向/值。 |
+| **参数** | `(dev, gpio, label)` | `(dev, gpio, flags, label)` |
+| **关键参数** | 无 | `flags` 参数 |
+| **使用场景** | 简单的引脚占用，后续会用 `gpio_direction_output` 等函数再配置。 | 需要在请求时就立即配置引脚状态的场景，代码更简洁。 |
+
+---
+
+#### `flags` 参数详解 (devm_gpio_request_one 的关键)
+
+`flags` 参数可以让你组合不同的标志来精确控制引脚的初始状态：
+
+*   **方向控制**:
+    *   `GPIOF_DIR_IN`: 设置为**输入**模式。
+    *   `GPIOF_DIR_OUT`: 设置为**输出**模式。
+
+*   **输出值控制** (仅当设置为输出时有效):
+    *   `GPIOF_INIT_LOW`: 初始电平为**低**。
+    *   `GPIOF_INIT_HIGH`: 初始电平为**高**。
+
+*   **输入状态** (仅当设置为输入时有效):
+    *   `GPIOF_ACTIVE_LOW`: 表示这个引脚是低电平有效。
+
+- 中断：devm_request_threaded_irq 函数原型：
+
+```c
+devm_request_threaded_irq(&(client->dev), ts->irq,   // 请求线程化中断
+                NULL, my_touch_irq_handler,          // 中断服务函数
+                IRQF_TRIGGER_FALLING | IRQF_ONESHOT, // 中断触发方式为下降沿触发，且只触发一次
+                client->name, ts);
+```
+
+- 中断线程服务函数
+
+```c
+static irqreturn_t my_touch_irq_handler(int irq, void *dev_id)
+{
+    s32 ret = -1;
+    struct my_touch_dev *ts = dev_id;
+    u8 addr[1] = {0x02};
+    u8 point_data[1+6*5]={0};//1个状态位置+5个触摸点，一个点是6个数据组成
+    u8 touch_num = 0;
+    u8 *touch_data;
+    int i = 0;
+    int event_flag, touch_id, input_x, input_y;
+
+    MY_DEBUG("irq");
+
+    ret = my_touch_i2c_read(ts->client, addr,sizeof(addr), point_data, sizeof(point_data));
+    if (ret < 0){
+        MY_DEBUG("I2C write end_cmd error!");
+    }
+    touch_num = point_data[0]&0x0f;
+    MY_DEBUG("touch_num:%d",touch_num);
+
+    //获取
+
+    for(i=0; i<5; i++){
+        //获取点
+        touch_data = &point_data[1+6*i];
+        /*
+        00b: Put Down 
+        01b: Put Up 
+        10b: Contact 
+        11b: Reserved
+        */
+        event_flag = touch_data[0] >> 6;
+        if(event_flag == 0x03)continue; 
+        touch_id = touch_data[2] >> 4;
+
+        MY_DEBUG("i:%d touch_id:%d event_flag:%d",i,touch_id,event_flag);
+        input_x  = ((touch_data[0]&0x0f)<<8) | touch_data[1];
+        input_y  = ((touch_data[2]&0x0f)<<8) | touch_data[3];
+
+        // MY_SWAP(input_x,input_y);
+        MY_DEBUG("i:%d,x:%d,y:%d",i,input_x,input_y);
+        // 设定输入设备的触摸槽位
+        input_mt_slot(ts->input_dev, touch_id);
+
+        if(event_flag == 0){
+            // 如果是按下上报按下和坐标
+            input_mt_report_slot_state(ts->input_dev, MT_TOOL_FINGER, true);
+            input_report_abs(ts->input_dev, ABS_MT_POSITION_X, 480-input_x);
+            input_report_abs(ts->input_dev, ABS_MT_POSITION_Y, input_y);
+        }else if (event_flag == 2){
+            // 如果是长按直接上报数据
+            input_report_abs(ts->input_dev, ABS_MT_POSITION_X, 480-input_x);
+            input_report_abs(ts->input_dev, ABS_MT_POSITION_Y, input_y);
+        }else if(event_flag == 1){
+            // 触摸抬起，上报事件
+            input_mt_report_slot_state(ts->input_dev, MT_TOOL_FINGER, false);
+        }
+    }
+
+    // 报告输入设备的指针仿真信息
+    input_mt_report_pointer_emulation(ts->input_dev, true);
+
+    // 同步输入事件
+    input_sync(ts->input_dev);
+
+    return IRQ_HANDLED;
+}
+```
+
+- TD_STATUS
+
+  - 读取数据从TD_STATUS开始，一个触摸点包含6个数据分别是TOUCH1_XH、TOUCH1_XL、TOUCH1_YH、TOUCH1_YL、TOUCH1_WEIGHT，共计支持5点触控，所以连续读取的长度为1（TD_STATUS）+6（数据）*5。
+
+```c
+ret = my_touch_i2c_read(ts->client, addr, sizeof(addr), point_data, sizeof(point_data));
+```
+
+  - TD_STATUS寄存器中的[]位存储的是触摸点数据，所以我们通过下面语句读取到当前有多少点被按下。
+
+```c
+touch_num = point_data[0]&0x0f;     // 获取触摸点的数量
+```
+
+- TOUCHn_XH寄存器的[7:6]位是事件标志位数，所以我们通过touch_data右移6位来获取[7:6]位值。通过判定这个标志位我们可以知道当前触摸状态。
+值类型：
+
+触摸：00b
+抬起：01b
+长按：10b
+保留：11b
+
+```c
+event_flag = touch_data0 >> 6;
+```
+
+- TOUCHn_XH寄存器的[3:0]位是x坐标的高[11:8]位数，要想获取完整的x坐标值需要把TOUCHn_XH的[3:0]位和TOUCHn_XL的[7:0]位进行组合。
+
+```c
+input_x  = ((touch_data[0]&0x0f)<<8) | touch_data[1];
+```
+
+- TOUCHn_YH寄存器的[7:4]位是触摸ID，通过右移4位获取到触摸id。
+
+```c
+touch_id = touch_data[2] >> 4;    // 获取触摸点ID
+```
+
+- TOUCHn_YH寄存器的[3:0]位是y坐标的高[11:8]位数，要想获取完整的x坐标值需要把TOUCHn_YH的[3:0]位和TOUCHn_YL的[7:0]位进行组合。
+
+```c
+input_y  = ((touch_data[2]&0x0f)<<8) | touch_data[3]; // 计算Y坐标
+```
