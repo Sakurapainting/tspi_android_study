@@ -826,3 +826,4 @@ make ARCH=arm64 BOOT_IMG=../rockdev/Image-rk3566_tspi/boot.img tspi-rk3566-user-
 ```
 
 - 在 `SDK/rockdev/Image-rk3566_tspi` 目录下查看所有生成的img
+- 但是，**注意！！！boot.img的路径是SDK/kernel/boot.img，注意不是SDK/rockdev/Image-rk3566_tspi下的boot.img**
