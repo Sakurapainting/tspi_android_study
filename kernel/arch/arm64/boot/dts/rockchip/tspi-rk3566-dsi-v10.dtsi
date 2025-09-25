@@ -3,19 +3,7 @@
  * Copyright (c) 2020 Rockchip Electronics Co., Ltd.
  *
  */
-/*********************************************************************
- *           立创开发板不靠卖板赚钱，以培养中国工程师为己任          
- *         泰山派软硬件资料与相关扩展板软硬件资料官网全部开源		 
- *                      开发板官网：www.lckfb.com                    
- *                     立创论坛：oshwhub.com/forum                   
- *            关注B站：【立创开发板】，掌握我们的最新动态！          
- *********************************************************************
- * 文件名：tspi-rk3566-dsi-v10.dtsi
- * 描述：mipi 屏幕
- * 更新:
- * 时间          作者           联系           说明
- * 2023-07-21   吴才成    1378913492@qq.com   v1.0.0
- *********************************************************************/
+
 / {
 	/*backlight: backlight {
 		compatible = "pwm-backlight";
@@ -75,17 +63,17 @@
 // 	};
 // };
 &i2c1 {
-	status = "okay";
-	ts@5d {
-		pinctrl-0 = <&touch_gpio>;
-		compatible = "goodix,gt9xx";
-		reg = <0x5d>;
-		tp-size = <970>;
-		max-x = <1080>;
-		max-y = <1920>;
-		touch-gpio = <&gpio1 RK_PA0 IRQ_TYPE_LEVEL_LOW>;
-		reset-gpio = <&gpio1 RK_PA1 GPIO_ACTIVE_HIGH>;
-	};
+	status = "okay";             // 表示这个i2c1设备是可用的
+    clock-frequency = <400000>;  // 设置i2c1的时钟频率为400kHz
+    myts@38 {                    // 定义一个i2c设备，设备地址为0x38，设备名称为myts
+        compatible = "my,touch"; // 表示这个设备是触摸屏设备，驱动名称为my,touch
+        reg = <0x38>;            // i2c设备地址
+        tp-size = <89>;          // 触摸屏的大小
+        max-x = <480>;           // 触摸屏支持的最大X坐标值
+        max-y = <800>;           // 触摸屏支持的最大Y坐标值
+        touch-gpio = <&gpio1 RK_PA0 IRQ_TYPE_LEVEL_LOW>; // 触摸屏的触摸中断引脚，连接到gpio1的第0个引脚，触发方式为低电平触发
+        reset-gpio = <&gpio1 RK_PA1 GPIO_ACTIVE_HIGH>;   // 触摸屏的复位引脚，连接到gpio1的第1个引脚，有效电平为高电平
+    };
 
 	GP7101@58 {      // 定义一个子节点，名字为GP7101，地址为58
 		compatible = "gp7101-backlight";   // 该节点与"gp7101-backlight"兼容
